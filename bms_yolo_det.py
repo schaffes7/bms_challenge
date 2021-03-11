@@ -166,14 +166,14 @@ if __name__ == '__main__':
               'epochs':1,
               'lr':1e-5,
               'dr':0.0,
-              'n_train':900}
+              'n_train':1000}
     
     K.clear_session()
     
     
     #%%
     # Generate annotation data from files
-#    ExtractAnnotations(keep_labels = keep_labels)
+#    ExtractAnnotations(keep_labels = params['keep_labels'])
     
     
     #%%
@@ -188,8 +188,8 @@ if __name__ == '__main__':
 #%%
     # Compile model
 #    opt = tf.keras.optimizers.Adam(lr = params['lr'], beta_1 = 0.9, beta_2 = 0.999, decay = 0.01)
-#    opt = tf.keras.optimizers.RMSprop(learning_rate = params['lr'])
-    opt = tf.keras.optimizers.Adagrad(learning_rate = params['lr'])
+    opt = tf.keras.optimizers.RMSprop(learning_rate = params['lr'])
+#    opt = tf.keras.optimizers.Adagrad(learning_rate = params['lr'])
 #    opt = tf.keras.optimizers.Adadelta(learning_rate = params['lr'])
     model.compile(loss = yolo_det_loss, optimizer = opt)
     print(model.summary())
