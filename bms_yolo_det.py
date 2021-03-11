@@ -19,6 +19,35 @@ from bms_utils import Labels, LoadImg2, ExtractAnnotations
 from bms_modeling import YOLO, yolo_det_loss
 
 
+
+class DataGen(tf.keras.utils.Sequence):
+    """Helper to iterate over the data (as Numpy arrays)."""
+
+    def __init__(self, params, entries):
+        self.entries = entries
+        self.params = params
+        self.batch_size = params['batch_size']
+        self.target_shape = params['target_shape']
+        self.keep_labels = params['keep_labels']
+        self.S = params['S']
+        self.B = params['B']
+        self.C = params['C']
+        
+    def __len__(self):
+        return len(self.entries) // self.batch_size
+
+    def __getitem__(self, idx):
+        """Returns tuple (input, target) correspond to batch #idx."""
+        entry = self.entries[idx]
+        path = entry.split(',')[0]
+        
+        x = LoadImg2(path, target_shape = self.target_shape)
+        x = np.reshape(x, (self.batch_size, self.target_shape[0], self.target_shape[1], 1))
+        y = YOLOBrick(entry, S = self.S, target_shape = self.target_shape)
+        return x, y
+
+
+
 # Make a SxSx(5B+C) YOLO output brick
 # Input: annotation (str) - a line of converted annotation text
 # Output: data brick (np.array)
@@ -126,41 +155,47 @@ def PlotXY(img, brick, conf_thresh = 0):
 #%%
 if __name__ == '__main__':
     
-    all_labels = Labels()[1:]
-    keep_labels = ['b','br','c','cl','f','h','i','n','nh','nh2','o','oh','p','s','sh','si']
-    target_shape = (640,640)
-    S = (12,12)
-    B = 1
-    batch_size = 1
-    epochs = 1
-    lr = 1e-5
-    dr = 0.0
-    n_train = 1000
+    params = {'labels':Labels()[1:],
+              'keep_labels':['b','br','c','cl','f','h','i','n','nh','nh2','o','oh','p','s','sh','si'],
+              'target_shape':(640,640),
+              'size_threshold':60,
+              'S':(12,12),
+              'B':1,
+              'C':0,
+              'batch_size':1,
+              'epochs':1,
+              'lr':1e-5,
+              'dr':0.0,
+              'n_train':900}
     
     K.clear_session()
+    
     
     #%%
     # Generate annotation data from files
 #    ExtractAnnotations(keep_labels = keep_labels)
     
+    
     #%%
     # Initialize YOLO model
     print('\nCompiling model...')
-    model = YOLO(input_shape = (target_shape[0],target_shape[1],1),
-                 S = S,
-                 B = B,
-                 dr = dr)
+    model = YOLO(input_shape = (params['target_shape'][0],params['target_shape'][1],1),
+                 S = params['S'],
+                 B = params['B'],
+                 dr = params['dr'])
     
     
+#%%
     # Compile model
-#    opt = tf.keras.optimizers.Adam(lr = lr, beta_1 = 0.9, beta_2 = 0.999, decay = 0.01)
-#    opt = tf.keras.optimizers.RMSprop(learning_rate = lr)
-#    opt = tf.keras.optimizers.Adagrad(learning_rate = lr)
-    opt = tf.keras.optimizers.Adadelta(learning_rate = lr)
+#    opt = tf.keras.optimizers.Adam(lr = params['lr'], beta_1 = 0.9, beta_2 = 0.999, decay = 0.01)
+#    opt = tf.keras.optimizers.RMSprop(learning_rate = params['lr'])
+    opt = tf.keras.optimizers.Adagrad(learning_rate = params['lr'])
+#    opt = tf.keras.optimizers.Adadelta(learning_rate = params['lr'])
     model.compile(loss = yolo_det_loss, optimizer = opt)
     print(model.summary())
+   
     
-    
+#%%
     # Read annotations.txt file
     print('\nReading annotations file...')
     with open(r"D:\DataStuff\bms\annotations.txt",'r') as f:
@@ -168,39 +203,24 @@ if __name__ == '__main__':
     entries = entries.split('\n')
     print('{} entries found.'.format(len(entries)))
     
-    # For each annotation entry...
-    print('\nFormatting data...')
-    i = 0; x_train = []; y_train = []
-    for entry in entries:
-        if os.path.exists(entry.split(',')[0]):
-            # Create input / output training items
-            x, y = XY(entry, target_shape = target_shape, S = S)
-            x_train.append(x)
-            y_train.append(y)
-        if i % 50 == 0:
-            print('Percent Complete: ', round(100 * (i / len(entries)), 2))
-        i += 1
-    x_train = np.array(x_train)
-    y_train = np.array(y_train)
     
-    x_test, y_test = XY(entries[0], target_shape = target_shape, S = S)
+#%%
+    print('\nTraining model...')
+    train_gen = DataGen(params, entries[0:params['n_train']])
+    valid_gen = DataGen(params, entries[params['n_train']:])
+    model.fit(train_gen,
+              validation_data = valid_gen,
+              epochs = 1)
+
 
 #%%
-    # Fit model on training data
-    print('\nTraining model...')
-    model.fit(x_train[0:n_train], y_train[0:n_train],
-              validation_data = (x_train[n_train:],y_train[n_train:]),
-              batch_size = batch_size,
-              epochs = epochs)
-    
-#%%
-    obj_conf = 0.35
+    obj_conf = 0.25
     
     for i in range(10):
         # Make predictions
         randent = random.choice(entries)
         if os.path.exists(randent.split(',')[0]):
-            x_test, y_test = XY(randent, target_shape = target_shape, S = S)
-            p = model.predict(np.reshape(x_test, (1,target_shape[0],target_shape[1],1)))
+            x_test, y_test = XY(randent, target_shape = params['target_shape'], S = params['S'])
+            p = model.predict(np.reshape(x_test, (1,params['target_shape'][0],params['target_shape'][1],1)))
             PlotXY(x_test, p[0], conf_thresh = obj_conf)
             

@@ -18,6 +18,7 @@ from tensorflow.keras.layers import Conv2D, Input, Reshape, Dense, Flatten, Add,
 from tensorflow.keras.models import Model
 
 
+
 def YOLO(input_shape = (416,416,1), S = (16,16), B = 1, C = 0, dr = 0.10):
 
     i = Input(shape = input_shape)
