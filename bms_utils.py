@@ -114,7 +114,7 @@ def LoadImg(path, target_shape = (416,416), invert = True, preprocess = True):
     return out_img
 
 
-def LoadImg2(path, target_shape = (416,416), invert = True, preprocess = True, crop = True, scale = True, buffer = 10, k = 3):
+def LoadImg2(path, target_shape = (416,416), invert = True, preprocess = True, crop = True, scale_images = True, buffer = 10, k = 3):
     # Read in image
     img = plt.imread(path)
     
@@ -137,9 +137,11 @@ def LoadImg2(path, target_shape = (416,416), invert = True, preprocess = True, c
         img = img / np.max(img)
         
     # Scale Image
-    if scale:
+    if scale_images or max(h,w) >= max(target_shape):
         sf = target_shape[np.argmax([h,w])] / max(h,w)
         img = rescale(img, sf)
+    
+    
     
     # Center the image in the target-sized field
     out_img = np.zeros(target_shape)
