@@ -9,6 +9,7 @@ import os
 import numpy as np
 import pandas as pd
 import random
+import itertools
 from scipy.ndimage.filters import convolve
 from skimage.transform import resize, rescale
 import matplotlib.pyplot as plt
@@ -86,23 +87,42 @@ def SaveChips(entry, outdir = r'D:\DataStuff\bms\chips'):
         
         
 # Create a new image w/ image chips
-def AlphabetSoup(srcdir = r'D:\DataStuff\bms\chips', target_shape = (640,640), size_thresh = 100, buffer = 100, S = (10,10), B = 1, C = 0, preprocess = True):
+def AlphabetSoup(labels,
+                 srcdir = r'D:\DataStuff\bms\chips',
+                 target_shape = (640,640),
+                 output_type = 'yolo',
+                 size_thresh = 100,
+                 preprocess = True,
+                 min_size = 10,
+                 buffer = 100,
+                 S = (10,10),
+                 B = 1,
+                 C = 0):
+    
+    
     flist = os.listdir(srcdir)
-    fnames = random.sample(flist, random.randint(1,15))
-    sf = random.random() * 1 + 1
+    sf = random.random() * 1.5 + 1
     img = np.zeros(target_shape)
     boxes = []
-    annotations = np.zeros((S[0], S[1], (5*B+C)))
-    grid_h = target_shape[0] / S[0]
-    grid_w = target_shape[1] / S[1]
     
-    for fname in fnames:
+    
+    if output_type == 'yolo':
+        annotations = np.zeros((S[0], S[1], (5*B+C)))
+        grid_h = target_shape[0] / S[0]
+        grid_w = target_shape[1] / S[1]
+    
+    if output_type == 'unet':
+        mask = np.zeros(target_shape)
+    
+    
+    for fname in random.sample(flist, random.randint(1,15)):
         fpath = os.path.join(srcdir, fname)
         label = fpath.split('.')[0].split('_')[-2]
         chip = Invert(plt.imread(fpath)[:,:,0])
         
         x = int(random.random() * (target_shape[1] - 2*buffer)) + buffer
         y = int(random.random() * (target_shape[0] - 2*buffer)) + buffer
+        
         
         # Convolve the image to flesh out broken lines
         if preprocess:
@@ -113,8 +133,8 @@ def AlphabetSoup(srcdir = r'D:\DataStuff\bms\chips', target_shape = (640,640), s
             
         chip = rescale(chip, sf)
         h,w = np.shape(chip)
-        
         chip_box = [x,y,x+w,y+h]
+        
         
         no_overlap = True
         for box in boxes:
@@ -122,22 +142,89 @@ def AlphabetSoup(srcdir = r'D:\DataStuff\bms\chips', target_shape = (640,640), s
                 no_overlap = False
                 break
                 
+            
         if no_overlap:
             img[y:y+h, x:x+w] = chip
             boxes.append(chip_box)
-            row = int(np.floor(y / grid_h))
-            col = int(np.floor(x / grid_w))
-            
-            x = x - col*grid_w
-            y = y - row*grid_h
-            
-            x = x / grid_w
-            y = y / grid_h
-            
-            h = min(h/size_thresh,1)
-            w = min(w/size_thresh,1)
-            
-            annotations[row,col,:] = [x,y,w,h,1]
-            
-    return img, annotations
 
+            
+            if output_type == 'yolo':
+                row = int(np.floor(y / grid_h))
+                col = int(np.floor(x / grid_w))
+                
+                x = x - col*grid_w
+                y = y - row*grid_h
+                
+                x = x / grid_w
+                y = y / grid_h
+                
+                h = min(h/(size_thresh-min_size),1)
+                w = min(w/(size_thresh-min_size),1)
+                annotations[row,col,:] = [x,y,w,h,1]
+            
+            if output_type == 'unet':
+#                mask[y:y+h,x:x+w] = labels.index(label)
+                mask[y:y+h,x:x+w] = 1
+            
+    if output_type == 'yolo':
+        return img, annotations
+    
+    if output_type == 'unet':
+        return img, mask
+
+#
+## Create a new image w/ image chips
+#def AlphabetSoup(srcdir = r'D:\DataStuff\bms\chips', target_shape = (640,640), size_thresh = 100, buffer = 100, S = (10,10), B = 1, C = 0, preprocess = True, min_size = 10):
+#    flist = os.listdir(srcdir)
+#    fnames = random.sample(flist, random.randint(1,15))
+#    sf = random.random() * 1 + 1
+#    img = np.zeros(target_shape)
+#    boxes = []
+#    annotations = np.zeros((S[0], S[1], (5*B+C)))
+#    grid_h = target_shape[0] / S[0]
+#    grid_w = target_shape[1] / S[1]
+#    
+#    for fname in fnames:
+#        fpath = os.path.join(srcdir, fname)
+#        label = fpath.split('.')[0].split('_')[-2]
+#        chip = Invert(plt.imread(fpath)[:,:,0])
+#        
+#        x = int(random.random() * (target_shape[1] - 2*buffer)) + buffer
+#        y = int(random.random() * (target_shape[0] - 2*buffer)) + buffer
+#        
+#        # Convolve the image to flesh out broken lines
+#        if preprocess:
+#            chip = convolve(chip, [[1,1,1],[1,1,1],[1,1,1]])
+#            chip = chip / np.max(chip)
+#            chip = convolve(chip, [[1,1,1],[1,1,1],[1,1,1]])
+#            chip = chip / np.max(chip)
+#            
+#        chip = rescale(chip, sf)
+#        h,w = np.shape(chip)
+#        
+#        chip_box = [x,y,x+w,y+h]
+#        
+#        no_overlap = True
+#        for box in boxes:
+#            if IOU(chip_box, box) > 0.10:
+#                no_overlap = False
+#                break
+#                
+#        if no_overlap:
+#            img[y:y+h, x:x+w] = chip
+#            boxes.append(chip_box)
+#            row = int(np.floor(y / grid_h))
+#            col = int(np.floor(x / grid_w))
+#            
+#            x = x - col*grid_w
+#            y = y - row*grid_h
+#            
+#            x = x / grid_w
+#            y = y / grid_h
+#            
+#            h = min(h/(size_thresh-min_size),1)
+#            w = min(w/(size_thresh-min_size),1)
+#            
+#            annotations[row,col,:] = [x,y,w,h,1]
+#            
+#    return img, annotations

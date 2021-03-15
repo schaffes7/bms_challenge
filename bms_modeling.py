@@ -9,14 +9,60 @@ import numpy as np
 import pandas as pd
 import os
 import sys
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-import random
 import tensorflow as tf
 from tensorflow.keras import backend as K
-from tensorflow.keras.layers import Conv2D, Input, Reshape, Dense, Flatten, Add, ZeroPadding2D, Dropout, Concatenate, MaxPooling2D, LeakyReLU, BatchNormalization
+from tensorflow.keras.layers import concatenate, Conv2D, Input, Reshape, Dense, Flatten, Dropout, MaxPooling2D, BatchNormalization, UpSampling2D
 from tensorflow.keras.models import Model
 
+
+def UNet(img_shape = (640,640,1), net_layers = [16,32,64], act = 'relu', pool_size = (2,2), final_pool = (1,1), dropout = 0.50, final_act = 'softmax'):
+    # INPUT
+    img_input = Input(shape = img_shape)
+    
+    # ENCODING LAYERS
+    fwd_lyrs = []
+    i = 0
+    for lyrs in net_layers:
+        print('Encode: ', lyrs)
+        if i == 0:
+            x = Conv2D(int(lyrs/2), (1,1), padding = 'same')(img_input)
+            x = Conv2D(lyrs, (3,3), padding = 'same')(x)
+        else:
+            x = Conv2D(int(lyrs/2), (1,1), padding = 'same')(x)
+            x = Conv2D(lyrs, (3,3), padding = 'same')(x)
+        x = BatchNormalization()(x)
+        x = Dropout(dropout)(x)
+        print('Conv: ', list(x.get_shape()))
+        fwd_lyrs.append(x)
+        x = MaxPooling2D(pool_size)(x)
+        print('Pool: ', list(x.get_shape()))
+        i += 1
+    
+    # MIDDLE LAYER
+    act = 'relu'
+    x = Conv2D(1, (1,1), activation = act, padding = 'same')(x)
+    print('Conv: ', list(x.get_shape()))
+    net_layers.reverse()
+    fwd_lyrs.reverse()
+    
+    # DECODING LAYERS
+    i = 0
+    for lyrs in net_layers:
+        print('Decode: ', lyrs)
+        x = Conv2D(int(lyrs/2), (1,1), padding = 'same')(x)
+        x = Conv2D(lyrs, (3,3), padding = 'same')(x)
+        x = BatchNormalization()(x)
+        x = Dropout(dropout)(x)
+        print('Conv: ', list(x.get_shape()))
+        x = concatenate([UpSampling2D(pool_size)(x), fwd_lyrs[i]])
+        print('Up2D: ', list(x.get_shape()))
+        i += 1
+    
+    # OUTPUT
+    out = Conv2D(1, final_pool, activation = final_act, padding = 'same')(x)
+    print('Conv: ', list(out.get_shape()))
+    model = Model(img_input, out)
+    return model
 
 
 def YOLO(input_shape = (416,416,1), S = (16,16), B = 1, C = 0, dr = 0.10):

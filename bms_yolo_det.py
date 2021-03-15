@@ -17,7 +17,7 @@ from tensorflow.keras import backend as K
 
 from bms_utils import Labels, LoadImg2, ExtractAnnotations
 from bms_modeling import YOLO, yolo_det_loss
-from bms_image_processing import AlphabetSoup
+from bms_image_processing import AlphabetSoup, Invert
 
 
 class AlphaGen(tf.keras.utils.Sequence):
@@ -33,13 +33,14 @@ class AlphaGen(tf.keras.utils.Sequence):
         self.B = params['B']
         self.C = params['C']
         self.size_thresh = params['size_thresh']
+        self.preprocess = params['preprocess']
         
     def __len__(self):
         return self.n_imgs // self.batch_size
 
     def __getitem__(self, idx):
         """Returns tuple (input, target) correspond to batch #idx."""
-        X, Y = AlphabetSoup(target_shape = self.target_shape, size_thresh = self.size_thresh, S = self.S, B = self.B, C = self.C, buffer = 120)
+        X, Y = AlphabetSoup(labels = self.keep_labels, target_shape = self.target_shape, size_thresh = self.size_thresh, S = self.S, B = self.B, C = self.C, buffer = 120, preprocess = self.preprocess)
         X = np.reshape(X, (self.batch_size, self.target_shape[0], self.target_shape[1], 1))
         return X, Y
 
@@ -58,6 +59,7 @@ class DataGen(tf.keras.utils.Sequence):
         self.C = params['C']
         self.size_thresh = params['size_thresh']
         self.scale_images = params['scale_images']
+        self.preprocess = params['preprocess']
         
     def __len__(self):
         return len(self.entries) // self.batch_size
@@ -67,7 +69,7 @@ class DataGen(tf.keras.utils.Sequence):
         entry = self.entries[idx]
         path = entry.split(',')[0]
         
-        x = LoadImg2(path, target_shape = self.target_shape, scale_images = self.scale_images)
+        x = LoadImg2(path, target_shape = self.target_shape, scale_images = self.scale_images, preprocess = self.preprocess)
         x = np.reshape(x, (self.batch_size, self.target_shape[0], self.target_shape[1], 1))
         y = YOLOBrick(entry, S = self.S, target_shape = self.target_shape, size_thresh = self.size_thresh, scale_images = self.scale_images)
         return x, y
@@ -131,8 +133,8 @@ def YOLOBrick(entry, S = (16,16), target_shape = (416,416), B = 1, size_thresh =
 
 
 # GENERATE TRAINING ITEMS FOR YOLO MODEL
-def XY(entry, target_shape = (416,416), S = (16,16), scale_images = True):
-    x = LoadImg2(entry.split(',')[0], target_shape = target_shape, scale_images = scale_images)
+def XY(entry, target_shape = (416,416), S = (16,16), scale_images = True, preprocess = True):
+    x = LoadImg2(entry.split(',')[0], target_shape = target_shape, scale_images = scale_images, preprocess = preprocess)
     x = np.reshape(x, (target_shape[0], target_shape[1], 1))
     y = YOLOBrick(entry, S = S, target_shape = target_shape, scale_images = scale_images)
     return x, y
@@ -155,8 +157,8 @@ def PlotXY(img, brick, conf_thresh = 0, size_thresh = 100):
             if np.sum(brick[i,j,:]) > 0:
                 ax = plt.gca()
                 x,y,w,h,conf = brick[i,j,:5]
-                w *= size_thresh
-                h *= size_thresh
+                w = w * size_thresh
+                h = h * size_thresh
                 x = x*grid_w + j*grid_w
                 y = y*grid_h + i*grid_h
                 
@@ -175,16 +177,18 @@ if __name__ == '__main__':
     
     params = {'labels':Labels()[1:],
               'keep_labels':['b','br','c','cl','f','h','i','n','nh','nh2','o','oh','p','s','sh','si'],
-              'target_shape':(640,640),
+              'target_shape':(704,704),
               'scale_images':True,
-              'size_thresh':60,
+              'preprocess':True,
+              'min_size':10,
+              'size_thresh':100,
               'S':(11,11),
               'B':1,
               'C':0,
               'batch_size':1,
               'epochs':1,
               'lr':1e-5,
-              'dr':0.0,
+              'dr':0.25,
               'n_train':1130}
     
     K.clear_session()
@@ -210,7 +214,7 @@ if __name__ == '__main__':
 #    opt = tf.keras.optimizers.RMSprop(learning_rate = params['lr'])
 #    opt = tf.keras.optimizers.Adagrad(learning_rate = params['lr'])
 #    opt = tf.keras.optimizers.Adadelta(learning_rate = params['lr'])
-    model.compile(loss = yolo_det_loss, optimizer = opt)
+    model.compile(loss = yolo_det_loss, optimizer = opt, metrics = ['mean_absolute_error'])
     print(model.summary())
    
     
@@ -224,31 +228,33 @@ if __name__ == '__main__':
     
     
 #%%
-    print('\nPre-Training model...')
-    train_gen = AlphaGen(params, n_imgs = 3000)
-    valid_gen = AlphaGen(params, n_imgs = 1000)
-    
-    model.fit(train_gen,
-              validation_data = valid_gen,
-              epochs = params['epochs'])
+    for i in range(5):
+        print('\nPre-Training model...')
+        train_gen = AlphaGen(params, n_imgs = 500)
+        valid_gen = AlphaGen(params, n_imgs = 500)
+        
+        model.fit(train_gen,
+                  validation_data = valid_gen,
+                  epochs = params['epochs'])
 
 #%%
-    print('\nTraining model...')
-    train_gen = DataGen(params, entries[0:params['n_train']])
-    valid_gen = DataGen(params, entries[params['n_train']:])
-    
-    model.fit(train_gen,
-              validation_data = valid_gen,
-              epochs = params['epochs'])
+    for i in range(1):
+        print('\nTraining model...')
+        train_gen = DataGen(params, entries[0:params['n_train']])
+        valid_gen = DataGen(params, entries[params['n_train']:])
+        
+        model.fit(train_gen,
+                  validation_data = valid_gen,
+                  epochs = params['epochs'])
 
 
 #%%
-    obj_conf = 0.01
+    obj_conf = 0.05
     for i in range(10):
         # Make predictions
         randent = random.choice(entries)
         if os.path.exists(randent.split(',')[0]):
-            x_test, y_test = XY(randent, target_shape = params['target_shape'], S = params['S'], scale_images = params['scale_images'])
+            x_test, y_test = XY(randent, target_shape = params['target_shape'], S = params['S'], scale_images = params['scale_images'], preprocess = params['preprocess'])
             p = model.predict(np.reshape(x_test, (1,params['target_shape'][0],params['target_shape'][1],1)))
             PlotXY(x_test, p[0], conf_thresh = obj_conf, size_thresh = params['size_thresh'])
             

@@ -4,80 +4,107 @@ Created on Mon Mar  8 21:30:38 2021
 
 @author: Not Your Computer
 """
-from skimage.transform import resize, rescale
+from skimage.transform import rescale
 
-from IPython.display import Image, display
-from tensorflow.keras.preprocessing.image import load_img
-import PIL
-from PIL import Image, ImageOps, ImageEnhance
-from tensorflow import keras
 import numpy as np
 import pandas as pd
-import os
-import cv2
-from tensorflow.keras import layers
 import random
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from skimage.transform import resize
 import tensorflow as tf
-import tensorflow.keras as keras
-from tensorflow.keras.models import Sequential, load_model, Model
-from tensorflow.keras.layers import concatenate, Dense, Activation, Dropout, Flatten, Conv2D, AveragePooling2D, MaxPooling2D, UpSampling2D, Input, ZeroPadding2D, BatchNormalization
-from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from tensorflow.keras.applications import MobileNet
-from sklearn.model_selection import train_test_split
-import imageio
+from tensorflow.keras import backend as K
 
-from bms_utils import Labels, LoadImg2, ExtractAnnotations, Invert, PixelBounds
+from bms_image_processing import AlphabetSoup
+from bms_modeling import UNet
+from bms_utils import Labels, LoadImg2, ExtractAnnotations, Invert
 
 
 #%%
-def CustomUNet(img_shape = (640,640,1), net_layers = [32,64,128], act = 'relu', pool_size = (2,2), final_pool = (1,1), dropout = 0.50, final_act = 'softmax'):
-    # INPUT
-    img_input = Input(shape = img_shape)
+
+class AlphaGen(tf.keras.utils.Sequence):
+    """Helper to iterate over the data (as Numpy arrays)."""
+
+    def __init__(self, params, n_imgs = 100):
+        self.params = params
+        self.n_imgs = n_imgs
+        self.batch_size = params['batch_size']
+        self.target_shape = params['target_shape']
+        self.keep_labels = params['keep_labels']
+        self.size_thresh = params['size_thresh']
+        self.preprocess = params['preprocess']
+        
+    def __len__(self):
+        return self.n_imgs // self.batch_size
+
+    def __getitem__(self, idx):
+        """Returns tuple (input, target) correspond to batch #idx."""
+        X, Y = AlphabetSoup(labels = self.keep_labels, output_type = 'unet', target_shape = self.target_shape, size_thresh = self.size_thresh, buffer = 120, preprocess = self.preprocess)
+        X = np.reshape(X, (self.batch_size, self.target_shape[0], self.target_shape[1], 1))
+        Y = np.reshape(Y, (Y.shape[0], Y.shape[1], 1))
+        return X, Y
+
+
+class DataGen(tf.keras.utils.Sequence):
+    """Helper to iterate over the data (as Numpy arrays)."""
+
+    def __init__(self, params, entries):
+        self.entries = entries
+        self.params = params
+        self.batch_size = params['batch_size']
+        self.target_shape = params['target_shape']
+        self.keep_labels = params['keep_labels']
+        self.size_thresh = params['size_thresh']
+        self.scale_images = params['scale_images']
+        self.preprocess = params['preprocess']
+        
+    def __len__(self):
+        return len(self.entries) // self.batch_size
+
+    def __getitem__(self, idx):
+        """Returns tuple (input, target) correspond to batch #idx."""
+        entry = self.entries[idx]
+        entry = entry.split(',')
+        n_entries = int(len(entry[3:]) / 9)
+        path,W,H = entry[0:3]
+        W = int(W)
+        H = int(H)
+        sf = self.target_shape[np.argmax([H,W])] / max(H,W)
+        
+        X = LoadImg2(path, target_shape = self.target_shape, scale_images = self.scale_images, preprocess = self.preprocess)
+        X = np.reshape(X, (self.batch_size, self.target_shape[0], self.target_shape[1], 1))
+        
+        Y = np.zeros(target_shape)
+        for i in range(n_entries):
+            x,y,w,h = entry[3+9*i:3+9*i+4]
+            x = sf * float(x)
+            y = sf * float(y)
+            w = sf * float(w)
+            h = sf * float(h)
+            Y[int(y-h/2):int(y+h/2),int(x-w/2):int(x+w/2)] = 1
+        
+        return X, Y
+
+
+def XY(entry, target_shape = (640,640), scale_images = True, preprocess = True):
+    entry = entry.split(',')
+    n_entries = int(len(entry[3:]) / 9)
+    path,W,H = entry[0:3]
+    W = int(W)
+    H = int(H)
+    sf = target_shape[np.argmax([H,W])] / max(H,W)
     
-    # ENCODING LAYERS
-    fwd_lyrs = []
-    i = 0
-    for lyrs in net_layers:
-        print('Encode: ', lyrs)
-        if i == 0: x = Conv2D(lyrs, (3,3), activation = act, padding = 'same')(img_input)
-        else: x = Conv2D(lyrs, (3,3), activation = act, padding = 'same')(x)
-        x = BatchNormalization()(x)
-        x = Dropout(dropout)(x)
-        print('Conv: ', list(x.get_shape()))
-        fwd_lyrs.append(x)
-        x = AveragePooling2D(pool_size)(x)
-        print('Pool: ', list(x.get_shape()))
-        i += 1
+    X = LoadImg2(path, target_shape = target_shape, scale_images = scale_images, preprocess = preprocess)
+    X = np.reshape(X, (1, target_shape[0], target_shape[1], 1))
     
-    # MIDDLE LAYER
-    act = 'relu'
-    x = Conv2D(1, (3,3), activation = act, padding = 'same')(x)
-    print('Conv: ', list(x.get_shape()))
-    net_layers.reverse()
-    fwd_lyrs.reverse()
+    Y = np.zeros(target_shape)
+    for i in range(n_entries):
+        x,y,w,h = entry[3+9*i:3+9*i+4]
+        x = sf * float(x)
+        y = sf * float(y)
+        w = sf * float(w)
+        h = sf * float(h)
+        Y[int(y-h/2):int(y+h/2),int(x-w/2):int(x+w/2)] = 1
     
-    # DECODING LAYERS
-    i = 0
-    for lyrs in net_layers:
-        print('Decode: ', lyrs)
-        x = Conv2D(lyrs, (3,3), activation = act, padding = 'same')(x)
-        x = BatchNormalization()(x)
-        x = Dropout(dropout)(x)
-        print('Conv: ', list(x.get_shape()))
-        x = concatenate([UpSampling2D(pool_size)(x), fwd_lyrs[i]])
-        print('Up2D: ', list(x.get_shape()))
-        i += 1
-    
-    # OUTPUT
-    out = Conv2D(1, final_pool, activation = final_act, padding = 'same')(x)
-    print('Conv: ', list(out.get_shape()))
-    model = Model(img_input, out)
-    return model
+    return X,Y
 
 
 def LoadMask(path, target_shape = (640,640)):
@@ -91,27 +118,32 @@ def LoadMask(path, target_shape = (640,640)):
     return out_img
 
 
-def UNetXY(entry, target_shape = (640,640)):
-    path = entry.split(',')[0]
-    x = LoadImg2(path, target_shape = target_shape)
-    h,w = np.shape(x)
-    x = np.reshape(x, (target_shape[0],target_shape[1],1))
-    y_path = path.replace('img.png','label.png')
-    y = LoadMask(y_path, target_shape = target_shape)
-    return x,y
+#%%
+params = {'labels':Labels()[1:],
+          'keep_labels':['b','br','c','cl','f','h','i','n','nh','nh2','o','oh','p','s','sh','si'],
+          'target_shape':(704,704),
+          'scale_images':True,
+          'preprocess':True,
+          'min_size':10,
+          'size_thresh':64,
+          'batch_size':1,
+          'epochs':1,
+          'lr':1e-4,
+          'dr':0.0,
+          'n_train':1000}
+
+K.clear_session()
 
 
 #%%
-lr = 1e-5
-n_train = 100
-target_shape = (640,640)
-model = CustomUNet(img_shape = (target_shape[0], target_shape[1], 1))
-opt = tf.keras.optimizers.Adam(lr = lr, beta_1 = 0.9, beta_2 = 0.999, decay = 0.01)
-#    opt = tf.keras.optimizers.RMSprop(learning_rate = lr)
-model.compile(loss = 'mean_squared_error', optimizer = opt)
+target_shape = params['target_shape']
+model = UNet(img_shape = (target_shape[0], target_shape[1], 1), final_act = 'sigmoid')
+opt = tf.keras.optimizers.Adam(lr = params['lr'], beta_1 = 0.9, beta_2 = 0.999, decay = 0.01)
+model.compile(loss = 'mean_absolute_error', optimizer = opt)
 print(model.summary())
 
 
+#%%
 # Read annotations.txt file
 print('\nReading annotations file...')
 with open(r"D:\DataStuff\bms\annotations.txt",'r') as f:
@@ -119,27 +151,29 @@ with open(r"D:\DataStuff\bms\annotations.txt",'r') as f:
 entries = entries.split('\n')
 
 
-# For each annotation entry...
-print('\nFormatting data...')
-i = 0; x_train = []; y_train = []
-for entry in entries:
-    if os.path.exists(entry.split(',')[0]):
-        # Create input / output training items
-        x, y = UNetXY(entry, target_shape = target_shape)
-        x_train.append(x)
-        y_train.append(y)
-    if i % 50 == 0:
-        print('Percent Complete: ', round(100 * (i / len(entries)), 2))
-    i += 1
-x_train = np.array(x_train)
-y_train = np.array(y_train)
 #%%
+print('\nPre-Training model...')
+train_gen = AlphaGen(params, n_imgs = 500)
+valid_gen = AlphaGen(params, n_imgs = 500)
 
-# Fit model on training data
-model.fit(x_train[0:10], y_train[0:10],
-          batch_size = 1,
-          epochs = 1)
+model.fit(train_gen,
+          validation_data = valid_gen,
+          epochs = params['epochs'])
 
 #%%
-x_test, y_test = UNetXY(entries[0], target_shape = target_shape)
-model.predict(x_test)
+print('\nTraining model...')
+train_gen = DataGen(params, entries[0:params['n_train']])
+valid_gen = DataGen(params, entries[params['n_train']:])
+
+model.fit(train_gen,
+          validation_data = valid_gen,
+          epochs = params['epochs'])
+#%%
+X,Y = XY(entries[random.randint(0,100)], target_shape = target_shape)
+p = model.predict(X)
+plt.imshow(X[0,:,:,0])
+plt.show()
+plt.imshow(Y[:,:])
+plt.show()
+plt.imshow(p[0,:,:,0])
+plt.show()

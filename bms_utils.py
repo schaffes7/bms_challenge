@@ -60,6 +60,12 @@ def RecSearch(search_dir, ext, outfile = None, verbose = False):
     return fpaths
 
 
+def LoadDF(path = r"D:\DataStuff\bms\train_labels.csv"):
+    df = pd.read_csv(path)
+    df = df.InChI.str.split('/', expand = True)
+    return
+
+
 # =============================================================================
 # IMAGE FUNCTIONS
 # =============================================================================
